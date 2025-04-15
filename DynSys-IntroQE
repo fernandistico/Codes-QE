@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Apr 10 17:59:38 2025
+
+@author: fvera
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+
+######################### Lorenz system#########################
+def lorenz(t, state, sigma=10.0, rho=28.0, beta=8.0/3.0):
+    x, y, z = state
+    dxdt = sigma * (y - x)
+    dydt = x * (rho - z) - y
+    dzdt = x * y - beta * z
+    return [dxdt, dydt, dzdt]
+
+# Initial conditions and time
+dt = 0.01
+t = np.arange(0, 25, dt)
+x0 = [1.0, 1.0, 1.0]
+
+# Numerical integration of the Lorenz system
+sol = solve_ivp(lorenz, [t[0], t[-1]], x0, t_eval=t, method='RK45')
+X = sol.y.T  # Transpose to have each row as a point in time
+
+# Visualization of the Lorenz system trajectories
+fig = plt.figure(figsize=(10,5))
+
+ax1 = fig.add_subplot(121, projection='3d')
+ax1.plot(X[:, 0], X[:, 1], X[:, 2], color='navy')
+ax1.set_title('Lorenz attractor')
+ax1.set_xlabel('x'); ax1.set_ylabel('y'); ax1.set_zlabel('z')
+
+ax2 = fig.add_subplot(122)
+ax2.plot(t, X[:, 0], label='x(t)')
+ax2.plot(t, X[:, 1], label='y(t)')
+ax2.plot(t, X[:, 2], label='z(t)')
+ax2.set_title('System variables vs. time')
+ax2.set_xlabel('Time'); ax2.set_ylabel('Value')
+ax2.legend()
+
+plt.tight_layout()
+plt.show()
+
+
+######################### FitzHugh-Nagumo system ####################
+def fhn(t, state, a=0.7, b=0.8, tau=12.5, I_ext=0.5):
+    v, w = state
+    dvdt = v - v**3 / 3 - w + I_ext
+    dwdt = (v + a - b * w) / tau
+    return [dvdt, dwdt]
+
+# Simulation
+dt = 0.01
+t_span = (0, 200)
+t_eval = np.arange(t_span[0], t_span[1], dt)
+x0 = [-1.0, 1.0]
+sol = solve_ivp(fhn, t_span, x0, t_eval=t_eval)
+
+# Extract results
+T = sol.t
+X = sol.y.T  # columns: [v, w]
+
+
+# Recompute the solution in case of previous reset
+sol = solve_ivp(fhn, t_span, x0, t_eval=t_eval)
+T = sol.t
+X = sol.y.T  # columns: [v, w]
+v_vals = X[:, 0]
+w_vals = X[:, 1]
+
+# nullclines
+v_grid = np.linspace(-2, 2, 500)
+w_nullcline = v_grid - v_grid**3 / 3 + 0.5  # dv/dt = 0, I_ext = 0.5
+v_nullcline = (v_grid + 0.7) / 0.8          # dw/dt = 0
+
+# Plot results
+plt.figure(figsize=(10, 4))
+
+# Time series
+plt.subplot(1, 2, 1)
+plt.plot(T, v_vals, label='v(t)')
+plt.plot(T, w_vals, label='w(t)')
+plt.xlabel('Time')
+plt.ylabel('Variables')
+plt.title('FitzHugh-Nagumo Dynamics')
+plt.legend()
+
+# Phase space with nullclines
+plt.subplot(1, 2, 2)
+plt.plot(v_vals, w_vals, label='Trajectory')
+plt.plot(v_grid, w_nullcline, 'r--', label='v-nullcline')
+plt.plot(v_grid, v_nullcline, 'b--', label='w-nullcline')
+plt.xlabel('v')
+plt.ylabel('w')
+plt.title('Phase Space with Nullclines')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+
+
+##################### Morris-Lecar model ##############
+def morris_lecar(t, y, params):
+    V, N = y
+    C = params["C"]
+    g_Ca = params["g_Ca"]
+    g_K = params["g_K"]
+    g_L = params["g_L"]
+    V_Ca = params["V_Ca"]
+    V_K = params["V_K"]
+    V_L = params["V_L"]
+    phi = params["phi"]
+    V1 = params["V1"]
+    V2 = params["V2"]
+    V3 = params["V3"]
+    V4 = params["V4"]
+    I_ext = params["I_ext"]
+
+    M_inf = 0.5 * (1 + np.tanh((V - V1) / V2))
+    N_inf = 0.5 * (1 + np.tanh((V - V3) / V4))
+    tau_N = 1 / (phi * np.cosh((V - V3) / (2 * V4)))
+
+    dVdt = (I_ext - g_Ca * M_inf * (V - V_Ca) - g_K * N * (V - V_K) - g_L * (V - V_L)) / C
+    dNdt = phi * (N_inf - N) / tau_N
+
+    return [dVdt, dNdt]
+
+# Parameters for Morris-Lecar
+params_ml = {
+    "C": 20.0,
+    "g_Ca": 4.0,
+    "g_K": 8.0,
+    "g_L": 2.0,
+    "V_Ca": 120.0,
+    "V_K": -84.0,
+    "V_L": -60.0,
+    "phi": 0.04,
+    "V1": -1.2,
+    "V2": 18.0,
+    "V3": 2.0,
+    "V4": 30.0,
+    "I_ext": 90.0
+}
+
+# Run
+t_span = (0, 200)
+dt = 0.05
+t_eval = np.arange(t_span[0], t_span[1], dt)
+x0_ml = [-60.0, 0.0]
+
+sol_ml = solve_ivp(morris_lecar, t_span, x0_ml, args=(params_ml,), t_eval=t_eval)
+T_ml = sol_ml.t
+X_ml = sol_ml.y.T
+V_ml, N_ml = X_ml[:, 0], X_ml[:, 1]
+
+# Plot Morris-Lecar 
+plt.figure(figsize=(10, 4))
+
+# Time series
+plt.subplot(1, 2, 1)
+plt.plot(T_ml, V_ml, label='V(t)')
+plt.plot(T_ml, N_ml, label='N(t)')
+plt.xlabel('Time')
+plt.ylabel('Variables')
+plt.title('Morris-Lecar Dynamics')
+plt.legend()
+
+# Phase plane
+plt.subplot(1, 2, 2)
+plt.plot(V_ml, N_ml, label='Trajectory')
+plt.xlabel('V')
+plt.ylabel('N')
+plt.title('Phase Space')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+
+
+###############3 Hodgkin-Huxley model #################
+def hodgkin_huxley(t, y, I_ext=10.0):
+    V, m, h, n = y
+    C_m = 1.0
+    g_Na = 120.0
+    g_K = 36.0
+    g_L = 0.3
+    E_Na = 50.0
+    E_K = -77.0
+    E_L = -54.387
+
+    # Gating variable dynamics
+    alpha_m = 0.1 * (V + 40.0) / (1.0 - np.exp(-(V + 40.0) / 10.0))
+    beta_m = 4.0 * np.exp(-(V + 65.0) / 18.0)
+
+    alpha_h = 0.07 * np.exp(-(V + 65.0) / 20.0)
+    beta_h = 1.0 / (1.0 + np.exp(-(V + 35.0) / 10.0))
+
+    alpha_n = 0.01 * (V + 55.0) / (1.0 - np.exp(-(V + 55.0) / 10.0))
+    beta_n = 0.125 * np.exp(-(V + 65) / 80.0)
+
+    # Currents
+    I_Na = g_Na * m**3 * h * (V - E_Na)
+    I_K = g_K * n**4 * (V - E_K)
+    I_L = g_L * (V - E_L)
+
+    dVdt = (I_ext - I_Na - I_K - I_L) / C_m
+    dmdt = alpha_m * (1.0 - m) - beta_m * m
+    dhdt = alpha_h * (1.0 - h) - beta_h * h
+    dndt = alpha_n * (1.0 - n) - beta_n * n
+
+    return [dVdt, dmdt, dhdt, dndt]
+
+# Initial conditions and time vector
+x0_hh = [-65.0, 0.05, 0.6, 0.32]  # [V, m, h, n]
+t_span_hh = (0, 50)
+dt_hh = 0.01
+t_eval_hh = np.arange(t_span_hh[0], t_span_hh[1], dt_hh)
+
+# Solve the system
+sol_hh = solve_ivp(hodgkin_huxley, t_span_hh, x0_hh, t_eval=t_eval_hh, args=(10.0,))
+T_hh = sol_hh.t
+X_hh = sol_hh.y.T
+V_hh, m_hh, h_hh, n_hh = X_hh[:, 0], X_hh[:, 1], X_hh[:, 2], X_hh[:, 3]
+
+# Plot results
+plt.figure(figsize=(10, 4))
+
+# Time series of voltage
+plt.subplot(1, 2, 1)
+plt.plot(T_hh, V_hh, label='V(t)')
+plt.xlabel('Time')
+plt.ylabel('Membrane Potential (mV)')
+plt.title('Hodgkin–Huxley Membrane Potential')
+plt.legend()
+
+# Gating variables over time
+plt.subplot(1, 2, 2)
+plt.plot(T_hh, m_hh, label='m(t)')
+plt.plot(T_hh, h_hh, label='h(t)')
+plt.plot(T_hh, n_hh, label='n(t)')
+plt.xlabel('Time')
+plt.ylabel('Gating Variables')
+plt.title('Hodgkin–Huxley Gating Dynamics')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+
+# Compute nullclines for Hodgkin-Huxley in (V, n) plane (simplified 2D slice)
+
+# Define a grid for phase space
+V_vals = np.linspace(-80, 50, 400)
+n_vals = np.linspace(0, 1, 400)
+V_grid, n_grid = np.meshgrid(V_vals, n_vals)
+
+# Fixed m and h values (simplified slice through full system)
+m_fixed = 0.05
+h_fixed = 0.6
+I_ext = 10.0
+
+# Parameters
+C_m = 1.0
+g_Na = 120.0
+g_K = 36.0
+g_L = 0.3
+E_Na = 50.0
+E_K = -77.0
+E_L = -54.387
+
+# Compute nullclines (dV/dt = 0, dn/dt = 0)
+alpha_n = 0.01 * (V_grid + 55.0) / (1.0 - np.exp(-(V_grid + 55.0) / 10.0))
+beta_n = 0.125 * np.exp(-(V_grid + 65.0) / 80.0)
+dn_dt = alpha_n * (1.0 - n_grid) - beta_n * n_grid
+
+I_Na = g_Na * m_fixed**3 * h_fixed * (V_grid - E_Na)
+I_K = g_K * n_grid**4 * (V_grid - E_K)
+I_L = g_L * (V_grid - E_L)
+dV_dt = (I_ext - I_Na - I_K - I_L) / C_m
+
+# Plot the nullclines
+plt.figure(figsize=(6, 5))
+cont1 = plt.contour(V_grid, n_grid, dV_dt, levels=[0], colors='r', linestyles='--')
+cont2 = plt.contour(V_grid, n_grid, dn_dt, levels=[0], colors='b', linestyles='--')
+plt.title('Hodgkin–Huxley Phase Diagram (V, n)')
+plt.xlabel('Membrane Potential V (mV)')
+plt.ylabel('Potassium Activation n')
+plt.legend([cont1.collections[0], cont2.collections[0]], ['dV/dt = 0', 'dn/dt = 0'])
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
+# Re-simulate Hodgkin-Huxley to extract trajectory in (V, n) space for overlay
+sol_hh_phase = solve_ivp(hodgkin_huxley, t_span_hh, x0_hh, t_eval=t_eval_hh, args=(10.0,))
+V_phase = sol_hh_phase.y[0]
+n_phase = sol_hh_phase.y[3]
+
+# Updated plot with corrected legend colors and larger axis label
+plt.figure(figsize=(6.5, 5))
+
+# Plot nullclines
+cont1 = plt.contour(V_grid, n_grid, dV_dt, levels=[0], colors='r', linestyles='--')
+cont2 = plt.contour(V_grid, n_grid, dn_dt, levels=[0], colors='b', linestyles='--')
+
+# Overlay trajectory
+plt.plot(V_phase, n_phase, color='black', lw=2, label='Trajectory')
+
+# Labels and legend
+plt.title('Hodgkin–Huxley Phase Portrait with Limit Cycle', fontsize=16)
+plt.xlabel('Membrane Potential V (mV)', fontsize=14)
+plt.ylabel('Potassium Activation $n$', fontsize=14)
+
+# Correct legend colors
+from matplotlib.lines import Line2D
+custom_lines = [Line2D([0], [0], color='r', linestyle='--'),
+                Line2D([0], [0], color='b', linestyle='--'),
+                Line2D([0], [0], color='black')]
+plt.legend(custom_lines, ['V-nullcline', 'n-nullcline', 'Trajectory'])
+
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+##################### Sweep I_ext from low to high values to detect bifurcation behavior in HH model
+I_ext_values = np.linspace(0, 20, 80)
+V_peaks = []
+
+# Reuse HH model and extract peaks of V for each I_ext
+for I_ext_val in I_ext_values:
+    sol = solve_ivp(hodgkin_huxley, (0, 100), x0_hh, t_eval=np.linspace(0, 100, 2000), args=(I_ext_val,))
+    V = sol.y[0]
+    
+    # Detect peaks (local maxima) to determine spiking
+    from scipy.signal import find_peaks
+    peaks, _ = find_peaks(V, height=0)  # only count spikes
+    V_peaks.append(V[peaks] if len(peaks) > 0 else [np.max(V[-500:])])  # store something even if no spikes
+
+# Prepare data for bifurcation diagram
+I_ext_plot = []
+V_plot = []
+for i, peaks in enumerate(V_peaks):
+    for p in peaks:
+        I_ext_plot.append(I_ext_values[i])
+        V_plot.append(p)
+
+# Plot bifurcation diagram
+plt.figure(figsize=(8, 5))
+plt.scatter(I_ext_plot, V_plot, s=10, alpha=0.7)
+plt.xlabel('External Current $I_{\\mathrm{ext}}$ ($\\mu$A/cm$^2$)')
+plt.ylabel('Peak Membrane Potential $V$ (mV)')
+plt.title('Bifurcation Diagram of the Hodgkin–Huxley Model')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
