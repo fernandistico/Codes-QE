@@ -1,0 +1,111 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pysindy as ps
+from pysindy.differentiation import SmoothedFiniteDifference
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# Hodgkin-Huxley model
+def hodgkin_huxley(t, y):
+    V, m, h, n = y
+    C_m = 1.0
+    g_Na = 120.0
+    g_K = 36.0
+    g_L = 0.3
+    E_Na = 50.0
+    E_K = -77.0
+    E_L = -54.387
+    I_ext = 10.0
+
+    alpha_m = 0.1 * (V + 40) / (1 - np.exp(-(V + 40) / 10))
+    beta_m = 4 * np.exp(-(V + 65) / 18)
+    alpha_h = 0.07 * np.exp(-(V + 65) / 20)
+    beta_h = 1 / (1 + np.exp(-(V + 35) / 10))
+    alpha_n = 0.01 * (V + 55) / (1 - np.exp(-(V + 55) / 10))
+    beta_n = 0.125 * np.exp(-(V + 65) / 80)
+
+    I_Na = g_Na * m**3 * h * (V - E_Na)
+    I_K = g_K * n**4 * (V - E_K)
+    I_L = g_L * (V - E_L)
+
+    dVdt = (I_ext - I_Na - I_K - I_L) / C_m
+    dmdt = alpha_m * (1 - m) - beta_m * m
+    dhdt = alpha_h * (1 - h) - beta_h * h
+    dndt = alpha_n * (1 - n) - beta_n * n
+
+    return np.array([dVdt, dmdt, dhdt, dndt])
+
+# RK4 integrator
+def rk4(f, t, y0):
+    n_steps = len(t)
+    y = np.zeros((n_steps, len(y0)))
+    y[0] = y0
+    dt = t[1] - t[0]
+
+    for i in range(1, n_steps):
+        k1 = f(t[i - 1], y[i - 1])
+        k2 = f(t[i - 1] + dt / 2, y[i - 1] + dt * k1 / 2)
+        k3 = f(t[i - 1] + dt / 2, y[i - 1] + dt * k2 / 2)
+        k4 = f(t[i - 1] + dt, y[i - 1] + dt * k3)
+        y[i] = y[i - 1] + dt * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
+    return y
+
+
+
+# Simulation parameters
+dt = 0.01
+t_train = np.arange(0, 100, dt)
+x0_train = [-65.0, 0.05, 0.6, 0.32]
+x_train = rk4(hodgkin_huxley, t_train, x0_train)
+
+# Fit SINDy model
+feature_names = ["V", "m", "h", "n"]
+model = ps.SINDy(
+    optimizer=ps.STLSQ(threshold=0.001), #les is better
+    feature_library=ps.PolynomialLibrary(degree=3), # 3 is better,4, 5->Die
+    differentiation_method=ps.SmoothedFiniteDifference(
+    smoother_kws={"window_length": 8, "polyorder": 2}), #window_length": 11-15, "polyorder": 2-4}),
+    feature_names=feature_names
+)
+model.fit(x_train, t=dt)
+model.print()
+
+# Simulate from learned model
+x_sim = model.simulate(x0_train, t_train)
+
+# Plot comparison
+fig, axs = plt.subplots(2, 2, figsize=(12, 6))
+labels = ["V", "m", "h", "n"]
+colors = ["red", "blue", "green", "orange"]
+
+for i in range(4):
+    ax = axs[i // 2, i % 2]
+    ax.plot(t_train, x_train[:, i], label=f"True {labels[i]}", color=colors[i], linewidth=2)
+    ax.plot(t_train, x_sim[:, i], '--', label=f"SINDy {labels[i]}", color='black', linewidth=2)
+    ax.set_xlabel("Time (ms)")
+    ax.set_ylabel(labels[i])
+    ax.legend()
+    ax.grid(True)
+
+fig.suptitle("Comparison between True and SINDy-Predicted Dynamics (Hodgkin–Huxley)")
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+plt.show()
+
+# Compute MSE for each variable
+errors = np.mean((x_train - x_sim)**2, axis=0)
+mse_results = {labels[i]: errors[i] for i in range(4)}
+mse_results
+
+plt.figure(figsize=(6, 5))
+plt.plot(x_train[:, 0], x_train[:, 3], label="True", color="red", linewidth=2)
+plt.plot(x_sim[:, 0], x_sim[:, 3], '--', label="SINDy", color="black", linewidth=2)
+plt.xlabel("Membrane Potential $V$ (mV)")
+plt.ylabel("Potassium Gate $n$")
+plt.title("Phase Portrait: $V$ vs $n$")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
