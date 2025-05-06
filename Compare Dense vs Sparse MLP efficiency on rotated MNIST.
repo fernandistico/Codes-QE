@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Compare Dense vs Sparse MLP efficiency on rotated MNIST.
+Author: fvera
+Date: May 6, 2025
+
+Why This Comparison Is Important:
+Rotated MNIST increases model demand by breaking translation invariance, thus more revealing the impact of compression.
+Sparse MLPs reduce computational cost and storage without necessarily hurting accuracy too much, an idea closely tied to pruning, efficient inference, and edge deployment.
+This experiment shows how much efficiency is gained: ~35% reduction by sparsification in early MLP layers.
+
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ========================
+# 1. Data Preparation
+# ========================
+
+# Define transformations: apply a random 45-degree rotation to simulate "rotated MNIST"
+transform = transforms.Compose([
+    transforms.RandomRotation(degrees=45),  # Important for testing model invariance to rotation
+    transforms.ToTensor()
+])
+
+# Load the training and testing data with rotation
+train_data = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+test_data = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
+# Wrap datasets in DataLoaders
+train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+test_loader = DataLoader(test_data, batch_size=1000, shuffle=False)
+
+# ========================
+# 2. Model Definitions
+# ========================
+
+# Standard (dense) MLP with 3 fully connected layers
+class DenseMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(28*28, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 28*28)  # Flatten the image
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.fc3(x)  # Output logits
+
+# Sparse MLP applies a binary mask to zero out a fraction of weights in the first two layers
+class SparseMLP(DenseMLP):
+    def __init__(self, mask_ratio=0.35):
+        super().__init__()
+        with torch.no_grad():
+            for layer in [self.fc1, self.fc2]:
+                mask = torch.rand_like(layer.weight) > mask_ratio  # ~35% sparsity
+                layer.weight.data *= mask.float()  # Zero out the masked weights
+
+# ========================
+# 3. Parameter and MAC Estimation
+# ========================
+
+# Count non-zero (trainable) parameters in the model
+def count_nonzero_parameters(model):
+    return sum(torch.count_nonzero(p).item() for p in model.parameters() if p.requires_grad)
+
+# Estimate Multiply-Accumulate operations (MACs) for each layer
+def estimate_sparse_macs(model):
+    total_macs = 0
+    for layer in [model.fc1, model.fc2, model.fc3]:
+        if hasattr(layer, "weight"):
+            total_macs += torch.count_nonzero(layer.weight).item()
+    return total_macs
+
+# ========================
+# 4. Model Instantiation and Comparison
+# ========================
+
+dense_model = DenseMLP()
+sparse_model = SparseMLP()
+
+# Measure efficiency
+dense_params = count_nonzero_parameters(dense_model)
+sparse_params = count_nonzero_parameters(sparse_model)
+
+dense_macs = estimate_sparse_macs(dense_model)
+sparse_macs = estimate_sparse_macs(sparse_model)
+
+# Compute percentage reductions
+param_reduction = 100 * (dense_params - sparse_params) / dense_params
+mac_reduction = 100 * (dense_macs - sparse_macs) / dense_macs
+
+# ========================
+# 5. Create Summary Table
+# ========================
+
+df = pd.DataFrame({
+    "Model": ["Dense MLP", "Sparse MLP"],
+    "Parameters": [dense_params, sparse_params],
+    "MACs (Estimated)": [dense_macs, sparse_macs],
+    "Param_Reduction_%": [f"{param_reduction:.2f}%", ""],
+    "MACs_Reduction_%": [f"{mac_reduction:.2f}%", ""]
+})
+
+# ========================
+# 6. Plot Efficiency Comparison
+# ========================
+
+fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+ax[0].bar(df["Model"], df["Parameters"], color=["steelblue", "darkorange"])
+ax[0].set_title("Trainable Parameters")
+ax[0].set_ylabel("Count")
+
+ax[1].bar(df["Model"], df["MACs (Estimated)"], color=["steelblue", "darkorange"])
+ax[1].set_title("Estimated MACs")
+ax[1].set_ylabel("Operations")
+
+plt.tight_layout()
+plt.show()
+
+# ========================
+# 7. Display Table
+# ========================
+
+print("\nModel Efficiency Comparison:")
+print(df.to_string(index=False))
