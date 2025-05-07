@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Sparse vs Dense MLP Benchmark for NeuroAI Efficiency
+=====================================================
+
+This experiment:
+- Demonstrates how architectural sparsity impacts parameter efficiency and accuracy.
+- Compares dense, randomly sparse (fixed), and learned sparse (pruned) MLPs.
+- Benchmarks the models on a small, rotated MNIST subset.
+- Highlights the trade-off between sparsity (MACs) and performance.
+
+Author: fvera
+"""
+
+# -------------------------------
+# Libraries
+# -------------------------------
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, Subset
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import seaborn as sns
+
+# -------------------------------
+# Configuration
+# -------------------------------
+torch.manual_seed(42)
+INPUT_DIM = 28 * 28
+HIDDEN_DIM1 = 256
+HIDDEN_DIM2 = 128
+OUTPUT_DIM = 10
+BATCH_SIZE = 64
+EPOCHS = 5
+PRUNE_RATIO = 0.7
+MASK_RATIO = 0.7
+
+# -------------------------------
+# MLP Architectures
+# -------------------------------
+
+class DenseMLP(nn.Module):
+    """Standard 3-layer fully connected MLP."""
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(INPUT_DIM, HIDDEN_DIM1)
+        self.fc2 = nn.Linear(HIDDEN_DIM1, HIDDEN_DIM2)
+        self.fc3 = nn.Linear(HIDDEN_DIM2, OUTPUT_DIM)
+
+    def forward(self, x):
+        x = x.view(-1, INPUT_DIM)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.fc3(x)
+
+class SparseFixedMLP(DenseMLP):
+    """MLP with fixed random sparsity masks applied to selected layers."""
+    def __init__(self, mask_ratio=MASK_RATIO):
+        super().__init__()
+        self.apply_mask(self.fc1, mask_ratio)
+        self.apply_mask(self.fc2, mask_ratio)
+
+    def apply_mask(self, layer, ratio):
+        with torch.no_grad():
+            mask = torch.rand_like(layer.weight) > ratio
+            layer.weight *= mask.float()
+
+class SparseLearnedMLP(DenseMLP):
+    """MLP with learned sparsity by pruning lowest magnitude weights."""
+    def __init__(self, prune_ratio=PRUNE_RATIO):
+        super().__init__()
+        self.prune_ratio = prune_ratio
+        self.prune_weights()
+
+    def prune_weights(self):
+        for layer in [self.fc1, self.fc2]:
+            with torch.no_grad():
+                flat = layer.weight.view(-1)
+                k = int((1 - self.prune_ratio) * flat.numel())
+                if k == 0:
+                    continue
+                thresh = flat.abs().kthvalue(k).values.item()
+                mask = layer.weight.abs() >= thresh
+                layer.weight *= mask.float()
+
+# -------------------------------
+# Dataset Preparation
+# -------------------------------
+transform = transforms.Compose([
+    transforms.RandomRotation(45),
+    transforms.ToTensor()
+])
+
+train_data = Subset(datasets.MNIST(root='./data', train=True, download=True, transform=transform), range(1000))
+test_data = Subset(datasets.MNIST(root='./data', train=False, download=True, transform=transform), range(500))
+
+train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
+test_loader = DataLoader(test_data, batch_size=1000, shuffle=False)
+
+# -------------------------------
+# Training and Evaluation
+# -------------------------------
+
+def train_and_evaluate(model, train_loader, test_loader, epochs=EPOCHS):
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    loss_fn = nn.CrossEntropyLoss()
+
+    for _ in range(epochs):
+        model.train()
+        for x_batch, y_batch in train_loader:
+            optimizer.zero_grad()
+            preds = model(x_batch)
+            loss = loss_fn(preds, y_batch)
+            loss.backward()
+            optimizer.step()
+
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for x_batch, y_batch in test_loader:
+            preds = model(x_batch)
+            predicted = preds.argmax(dim=1)
+            correct += (predicted == y_batch).sum().item()
+            total += y_batch.size(0)
+
+    return 100 * correct / total  # Accuracy %
+
+# -------------------------------
+# Sparsity Utility
+# -------------------------------
+
+def calculate_sparsity(model):
+    total, nonzero = 0, 0
+    for param in model.parameters():
+        if param.requires_grad:
+            total += param.numel()
+            nonzero += torch.count_nonzero(param).item()
+    sparsity = 100 * (1 - nonzero / total)
+    return total, nonzero, sparsity
+
+# -------------------------------
+# Run All Models
+# -------------------------------
+models = {
+    "Dense MLP": DenseMLP(),
+    "Sparse (Fixed)": SparseFixedMLP(),
+    "Sparse (Learned)": SparseLearnedMLP()
+}
+
+summary = []
+
+for name, model in models.items():
+    acc = train_and_evaluate(model, train_loader, test_loader)
+    total, nonzero, sparsity = calculate_sparsity(model)
+    summary.append({
+        "Model": name,
+        "Total Params": total,
+        "Nonzero Params": nonzero,
+        "Sparsity (%)": round(sparsity, 2),
+        "Test Accuracy (%)": round(acc, 2),
+        "Estimated MACs": nonzero  # proxy for computational cost
+    })
+
+# -------------------------------
+# Plotting and Reporting
+# -------------------------------
+df = pd.DataFrame(summary)
+
+fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+# Sparsity Bar Plot
+axs[0].bar(df["Model"], df["Sparsity (%)"], color=["steelblue", "darkorange", "seagreen"])
+axs[0].set_title("Model Sparsity")
+axs[0].set_ylabel("Sparsity (%)")
+axs[0].set_ylim(0, 100)
+
+# Accuracy vs Estimated MACs
+axs[1].bar(df["Model"], df["Test Accuracy (%)"], alpha=0.7, label="Accuracy (%)")
+ax2 = axs[1].twinx()
+ax2.plot(df["Model"], df["Estimated MACs"], color="red", marker="o", label="Estimated MACs")
+axs[1].set_title("Accuracy vs Compute Cost")
+axs[1].set_ylabel("Accuracy (%)")
+ax2.set_ylabel("Estimated MACs")
+
+# Combine legends
+lines_labels = [axs[1].get_legend_handles_labels(), ax2.get_legend_handles_labels()]
+lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
+axs[1].legend(lines, labels, loc="lower left")
+
+plt.tight_layout()
+plt.show()
+
+# Print summary table
+print("\nModel Efficiency and Accuracy Summary:")
+print(df.to_string(index=False))
