@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+@author: fvera
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+
+# FitzHugh–Nagumo parameters
+epsilon = 0.08
+a = 0.7
+b = 0.8
+I = 0.5  # external input
+
+# Time parameters
+dt = 0.1
+T = 200
+steps = int(T / dt)
+
+# Initialize arrays
+v = np.zeros(steps)
+w = np.zeros(steps)
+t = np.linspace(0, T, steps)
+
+# Initial conditions
+v[0] = -1.0
+w[0] = 1.0
+
+# FitzHugh–Nagumo equations
+def f(v, w, I):
+    return v - v**3 / 3 - w + I
+
+def g(v, w):
+    return epsilon * (v + a - b * w)
+
+# RK4 integration
+for i in range(steps - 1):
+    kv1 = dt * f(v[i], w[i], I)
+    kw1 = dt * g(v[i], w[i])
+    
+    kv2 = dt * f(v[i] + kv1/2, w[i] + kw1/2, I)
+    kw2 = dt * g(v[i] + kv1/2, w[i] + kw1/2)
+    
+    kv3 = dt * f(v[i] + kv2/2, w[i] + kw2/2, I)
+    kw3 = dt * g(v[i] + kv2/2, w[i] + kw2/2)
+    
+    kv4 = dt * f(v[i] + kv3, w[i] + kw3, I)
+    kw4 = dt * g(v[i] + kv3, w[i] + kw3)
+    
+    v[i+1] = v[i] + (kv1 + 2*kv2 + 2*kv3 + kv4) / 6
+    w[i+1] = w[i] + (kw1 + 2*kw2 + 2*kw3 + kw4) / 6
+
+# Plotting results
+fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+# Time series
+axs[0].plot(t, v, label='v (membrane potential)')
+axs[0].plot(t, w, label='w (recovery variable)')
+axs[0].set_title('FitzHugh–Nagumo Time Series')
+axs[0].set_xlabel('Time')
+axs[0].set_ylabel('Variables')
+axs[0].legend()
+
+# Phase portrait
+axs[1].plot(v, w, label='Trajectory')
+axs[1].set_title('Phase Portrait (v-w plane)')
+axs[1].set_xlabel('v')
+axs[1].set_ylabel('w')
+axs[1].grid(True)
+axs[1].legend()
+
+plt.rcParams.update({
+    'axes.labelsize': 14,
+    'axes.titlesize': 16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12
+})
+
+
+plt.xlabel('Membrane Potential v(t)', fontsize=12)
+plt.ylabel('Recovery Variable w(t)', fontsize=12)
+plt.title('Time Series of FHN Model', fontsize=16)
+plt.xticks(fontsize=12)
+plt.yticks(fontsize=12)
+plt.legend(fontsize=12)
