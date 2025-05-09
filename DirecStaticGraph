@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+@author: fvera
+
+Directed Static Graph with 10 Nodes (2 ≤ Out-degree ≤ 5)
+Includes: Weighted Edges, Graph Visualization, Connectivity and Robustness Metrics,
+Shortest Path Algorithms (5 methods)
+
+"""
+
+import random
+import numpy as np
+import networkx as nx
+import matplotlib.pyplot as plt
+import seaborn as sns
+from networkx.algorithms.community import louvain_communities
+from networkx.exception import NetworkXNoPath
+import pandas as pd
+
+# ----------------------- [1] Graph Construction -----------------------
+random.seed(42)
+N = 100
+d_min, d_max = 2, 99
+
+G = nx.DiGraph()
+G.add_nodes_from(range(N))
+
+for u in G.nodes:
+    candidates = [v for v in G.nodes if v != u]
+    k = random.randint(d_min, d_max)
+    targets = random.sample(candidates, k)
+    for v in targets:
+        weight = round(random.uniform(0.1, 1.0), 3)
+        G.add_edge(u, v, weight=weight)
+
+# --------------------- [2] Graph Visualization ------------------------
+def visualize_graph(G):
+    plt.figure(figsize=(6, 6))
+    pos = nx.spring_layout(G, seed=42)
+    #edge_labels = nx.get_edge_attributes(G, 'weight')
+    nx.draw(G, pos, with_labels=False, node_size=600, arrows=True, edge_color='gray')
+    #nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=9)
+    plt.title("Directed Graph with Random Weights (0–1)")
+    plt.tight_layout()
+    plt.show()
+
+# ----------------- [3] Connectivity Metrics (10 methods) ---------------
+metrics_conn = {}
+
+A_bin = nx.to_numpy_array(G, dtype=int)
+metrics_conn["Adjacency density"] = A_bin.sum() / (N * (N - 1))
+
+deg_in  = dict(G.in_degree())
+deg_out = dict(G.out_degree())
+metrics_conn["Mean in-degree"]  = np.mean(list(deg_in.values()))
+metrics_conn["Mean out-degree"] = np.mean(list(deg_out.values()))
+
+metrics_conn["Graph density"] = nx.density(G)
+
+scc = list(nx.strongly_connected_components(G))
+metrics_conn["#SCC"] = len(scc)
+metrics_conn["Size largest SCC"] = max(len(c) for c in scc)
+
+H = G.subgraph(max(scc, key=len)).copy()
+metrics_conn["Avg shortest path (largest SCC)"] = nx.average_shortest_path_length(H)
+
+metrics_conn["Global clustering"] = nx.transitivity(G.to_undirected())
+
+bet = nx.betweenness_centrality(G)
+metrics_conn["Mean betweenness"] = np.mean(list(bet.values()))
+
+clo = nx.closeness_centrality(G)
+metrics_conn["Mean closeness"] = np.mean(list(clo.values()))
+
+eig = nx.eigenvector_centrality(G.to_undirected())
+metrics_conn["Std eigenvector centrality"] = np.std(list(eig.values()))
+
+pr = nx.pagerank(G, alpha=0.85)
+p = np.array(list(pr.values()))
+metrics_conn["PageRank entropy"] = -np.sum(p * np.log2(p))
+
+# print("\n=== Connectivity Metrics Summary ===")
+# for name, value in metrics_conn.items():
+#     print(f"{name:30s}: {value:.4f}")
+
+# ------------------ [4] Weighted Adjacency Heatmap -----------------
+A_weighted = nx.to_numpy_array(G, weight='weight', dtype=float)
+plt.figure(figsize=(8, 6))
+sns.heatmap(A_weighted, annot=False, fmt=".2f", cmap="viridis", cbar=True) #,
+            # xticklabels=[f"N{i}" for i in range(N)],
+            # yticklabels=[f"N{i}" for i in range(N)])
+plt.title("Weighted Adjacency Matrix (Heatmap)")
+plt.xlabel("Target Node")
+plt.ylabel("Source Node")
+plt.tight_layout()
+plt.show()
+
+# ------------------ [5] Robustness Metrics --------------------------
+metrics_rob = {}
+
+try:
+    metrics_rob["Degree assortativity"] = nx.degree_assortativity_coefficient(G)
+except:
+    metrics_rob["Degree assortativity"] = np.nan
+
+try:
+    metrics_rob["Node connectivity"] = nx.node_connectivity(G)
+except:
+    metrics_rob["Node connectivity"] = np.nan
+
+try:
+    katz = nx.katz_centrality(G, alpha=0.1, beta=1.0, max_iter=1000, tol=1e-6)
+    metrics_rob["Katz centrality std"] = np.std(list(katz.values()))
+except:
+    metrics_rob["Katz centrality std"] = np.nan
+
+try:
+    undirected_G = G.to_undirected()
+    coms = louvain_communities(undirected_G, seed=42)
+    metrics_rob["#Louvain communities"] = len(coms)
+    metrics_rob["Size largest community"] = max(len(c) for c in coms)
+except:
+    metrics_rob["#Louvain communities"] = np.nan
+    metrics_rob["Size largest community"] = np.nan
+
+# print("\n=== Robustness-Oriented Metrics ===")
+# for k, v in metrics_rob.items():
+#     print(f"{k:30s}: {v:.4f}" if not np.isnan(v) else f"{k:30s}: N/A")
+
+# ------------------ [6] Shortest Paths Algorithms --------------------
+def compute_paths(G, source, target):
+    results = {}
+
+    try:
+        path = nx.dijkstra_path(G, source, target, weight='weight')
+        cost = nx.dijkstra_path_length(G, source, target, weight='weight')
+        results['Dijkstra'] = (path, cost)
+    except NetworkXNoPath:
+        results['Dijkstra'] = (None, float('inf'))
+
+    try:
+        path = nx.bellman_ford_path(G, source, target, weight='weight')
+        cost = nx.bellman_ford_path_length(G, source, target, weight='weight')
+        results['Bellman-Ford'] = (path, cost)
+    except NetworkXNoPath:
+        results['Bellman-Ford'] = (None, float('inf'))
+
+    try:
+        path = nx.astar_path(G, source, target, heuristic=lambda u, v: 0, weight='weight')
+        cost = nx.astar_path_length(G, source, target, heuristic=lambda u, v: 0, weight='weight')
+        results['A*'] = (path, cost)
+    except NetworkXNoPath:
+        results['A*'] = (None, float('inf'))
+
+    try:
+        fw = nx.floyd_warshall_predecessor_and_distance(G, weight='weight')
+        pred, dist = fw
+        cost = dist[source][target]
+        path = []
+        u = target
+        while u != source:
+            path.insert(0, u)
+            u = pred[source][u]
+        path.insert(0, source)
+        results['Floyd-Warshall'] = (path, cost)
+    except:
+        results['Floyd-Warshall'] = (None, float('inf'))
+
+    try:
+        cost, path = nx.bidirectional_dijkstra(G, source, target, weight='weight')
+        results['Bidirectional Dijkstra'] = (path, cost)
+    except NetworkXNoPath:
+        results['Bidirectional Dijkstra'] = (None, float('inf'))
+
+    print("\n=== Path and Cost Analysis (N0 → NN) ===")
+    for method, (path, cost) in results.items():
+        if path is not None:
+            print(f"{method:25s}: cost = {cost:.3f}, path = {path}, steps = {len(path)-1}")
+        else:
+            print(f"{method:25s}: No path found")
+    return results
+
+
+# ------------------ [6.5] All Paths Analysis --------------------
+def analyze_all_paths(G, source, target, max_depth=6):
+    """
+    Analiza todos los caminos simples desde 'source' hasta 'target'
+    hasta una profundidad máxima (max_depth).
+    
+    Devuelve:
+    - Número total de caminos
+    - Longitud promedio
+    - Peso total promedio
+    - Peso promedio por salto
+    """
+    try:
+        all_paths = list(nx.all_simple_paths(G, source=source, target=target, cutoff=max_depth))
+    except nx.NetworkXNoPath:
+        all_paths = []
+
+    if not all_paths:
+        return {
+            "n_paths": 0,
+            "avg_hops": None,
+            "avg_total_weight": None,
+            "avg_weight_per_hop": None
+        }
+
+    lengths = [len(path) - 1 for path in all_paths]
+    weights = []
+    
+    for path in all_paths:
+        total_weight = sum(G[u][v]['weight'] for u, v in zip(path[:-1], path[1:]))
+        weights.append(total_weight)
+    
+    return {
+        "n_paths": len(all_paths),
+        "avg_hops": np.mean(lengths),
+        "avg_total_weight": np.mean(weights),
+        "avg_weight_per_hop": np.mean([w / l for w, l in zip(weights, lengths)])
+    }
+
+
+# ------------------ [7] Run All and Export Results --------------------
+source, target = 0, N - 1
+visualize_graph(G)
+results = compute_paths(G, source, target)
+
+df_conn = pd.DataFrame([metrics_conn], index=["Connectivity"])
+df_robust = pd.DataFrame([metrics_rob], index=["Robustness"])
+df_paths = pd.DataFrame([
+    {"Method": k, "Cost": v[1], "Steps": len(v[0]) - 1 if v[0] else None}
+    for k, v in results.items()
+])
+
+print("\n=== ===Tabular Summary === ===")
+print("\n===Connectivity Metrics===\n", df_conn.T)
+print("\n===Robustness Metrics===\n", df_robust.T)
+print("\n===Pathfinding Results===\n", df_paths)
+
+
+# [8] All-Paths Communication Analysis
+path_metrics = analyze_all_paths(G, source, target, max_depth=6)
+
+df_allpaths = pd.DataFrame([path_metrics], index=["All Paths (A→B)"])
+
+print("\n===All Paths Communication Metrics===\n", df_allpaths.T)
